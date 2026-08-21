@@ -26,13 +26,21 @@ local function centering_left_pad(ui, len)
   return math.floor(math.max(0, pad))
 end
 
+-- board squares are drawn this many screen columns wide
+local CELL_WIDTH = 2
+
+local function pad_cell(char)
+  local pad = CELL_WIDTH - fn.strdisplaywidth(char)
+  return pad > 0 and (char .. string.rep(" ", pad)) or char
+end
+
 function Ui:redraw_status()
   local function time_string(show_ms)
     local nanoseconds = uv.hrtime() - self.game.start_time
     local seconds = math.floor(nanoseconds / 1000000000)
     local minutes = math.floor(seconds / 60)
 
-    local time = string.format("Time: %02d:%02d", minutes, seconds % 60)
+    local time = string.format("⏰ %02d:%02d", minutes, seconds % 60)
     if show_ms then
       local milliseconds = math.floor(nanoseconds / 1000000)
       time = string.format("%s.%03d", time, milliseconds % 1000)
@@ -44,22 +52,21 @@ function Ui:redraw_status()
   local hl_col1, hl_col2, hl_group
   local status = { "", "" }
   if state == game_state.GAME_NOT_STARTED then
-    status[1] = "Reveal a square or press F1 for help."
+    status[1] = "🙂 Reveal a square or press F1 for help."
   elseif state == game_state.GAME_STARTED then
     local board = self.game.board
-    status[1] = "Flagged: " .. board.flag_count .. "/" .. board.mine_count
-    local hl_len = #status[1]
-    status[1] = time_string() .. "    " .. status[1]
+    local flags = string.format("🚩 %d/%d", board.flag_count, board.mine_count)
+    status[1] = "🙂 " .. time_string() .. "    " .. flags
     if board.flag_count > board.mine_count then
-      hl_col1 = #status[1] - hl_len
-      hl_col2, hl_group = hl_col1 + hl_len, "NvimesweeperTooManyFlags"
+      hl_col1 = #status[1] - #flags
+      hl_col2, hl_group = #status[1], "NvimesweeperTooManyFlags"
     end
   elseif game_state.is_game_over(state) then
     if state == game_state.GAME_WON then
-      status[1] = "Congratulations, you win!"
+      status[1] = "😎 Congratulations, you win!"
       hl_group = "NvimesweeperWin"
     elseif state == game_state.GAME_LOST then
-      status[1] = "KA-BOOM! You explode..."
+      status[1] = "💥 KA-BOOM! You explode..."
       hl_group = "NvimesweeperLose"
     end
     hl_col1, hl_col2 = 0, #status[1]
@@ -69,7 +76,7 @@ function Ui:redraw_status()
 
   local left_pads = {}
   for i, s in ipairs(status) do
-    left_pads[i] = centering_left_pad(self, #s)
+    left_pads[i] = centering_left_pad(self, fn.strdisplaywidth(s))
     status[i] = string.rep(" ", left_pads[i]) .. s
   end
 
@@ -125,23 +132,29 @@ end
 
 function Ui:board_square_hl_group(i)
   local game_over = game_state.is_game_over(self.game.state)
-  local state = self.game.board.state[i]
-  local hl_group = "NvimesweeperUnrevealed"
+  local board = self.game.board
+  local state = board.state[i]
 
-  if game_over and self.game.board.mines[i] then
+  -- unrevealed squares alternate highlights in a checkerboard pattern
+  local x, y = (i - 1) % board.width, math.floor((i - 1) / board.width)
+  local alt = (x + y) % 2 == 1 and "Alt" or ""
+  local hl_group = "NvimesweeperUnrevealed" .. alt
+
+  if game_over and board.mines[i] then
     if state == board_mod.SQUARE_REVEALED then
       hl_group = "NvimesweeperTriggeredMine"
     elseif state == board_mod.SQUARE_FLAGGED then
-      hl_group = "NvimesweeperFlag"
+      hl_group = "NvimesweeperFlag" .. alt
     else
       hl_group = "NvimesweeperMine"
     end
   elseif state == board_mod.SQUARE_FLAGGED then
-    hl_group = game_over and "NvimesweeperFlagWrong" or "NvimesweeperFlag"
+    hl_group = (game_over and "NvimesweeperFlagWrong" or "NvimesweeperFlag")
+      .. alt
   elseif state == board_mod.SQUARE_MAYBE then
-    hl_group = "NvimesweeperMaybe"
+    hl_group = "NvimesweeperMaybe" .. alt
   elseif state == board_mod.SQUARE_REVEALED then
-    local danger = self.game.board.danger[i]
+    local danger = board.danger[i]
     hl_group = danger > 0 and ("NvimesweeperDanger" .. danger)
       or "NvimesweeperRevealed"
   end
@@ -149,53 +162,83 @@ function Ui:board_square_hl_group(i)
   return hl_group
 end
 
-function Ui:redraw_board(x1, y1, x2, y2)
-  x1, y1 = x1 or 0, y1 or 0
-  x2, y2 = x2 or self.game.board.width - 1, y2 or self.game.board.height - 1
+-- squares may have varying byte widths, so affected rows are always redrawn
+-- in full; the x range arguments are accepted for compatibility, but unused
+function Ui:redraw_board(_, y1, _, y2)
+  y1, y2 = y1 or 0, y2 or self.game.board.height - 1
 
-  local top_left_i = self.game.board:index(x1, y1)
-  local top_left_pos = self:board_square_pos(top_left_i)
+  local board = self.game.board
+  local origin = self:board_square_pos(1)
 
-  -- modify the changed part of each row
-  self:enable_modification(true)
-  local row = {}
-  for y = y1, y2 do
-    local i = self.game.board:index(x1, y)
-    for x = x1, x2 do
-      row[x - x1 + 1] = self:board_square_char(i)
-      i = i + 1
+  -- Replacing a full row preserves byte columns, which may point at a
+  -- different square when cells change byte width. Remember logical squares
+  -- and restore their cursors after rebuilding the extmarks.
+  local cursors = {}
+  if self.board_extmarks[board.width * board.height] then
+    for _, win in ipairs(api.nvim_list_wins()) do
+      if api.nvim_win_get_buf(win) == self.buf then
+        local cursor = api.nvim_win_get_cursor(win)
+        local x, y = self:win_to_board_pos(cursor[2], cursor[1] - 1)
+        local i = board:index(x, y)
+        if i and y >= y1 and y <= y2 then
+          cursors[#cursors + 1] = { win = win, square = i }
+        end
+      end
     end
+  end
 
-    local oy = y - y1
+  self:enable_modification(true)
+  local cells, offsets = {}, {}
+  for y = y1, y2 do
+    local row_i = board:index(0, y)
+    local lnum = origin[1] + y
+
+    -- build the row, remembering the byte offset of each square
+    local offset = 0
+    for x = 0, board.width - 1 do
+      local cell = pad_cell(self:board_square_char(row_i + x))
+      cells[x + 1] = cell
+      offsets[x + 1] = offset
+      offset = offset + #cell
+    end
+    offsets[board.width + 1] = offset
+
+    local line = api.nvim_buf_get_lines(self.buf, lnum, lnum + 1, true)[1]
     api.nvim_buf_set_text(
       self.buf,
-      top_left_pos[1] + oy,
-      top_left_pos[2],
-      top_left_pos[1] + oy,
-      top_left_pos[2] + #row,
-      { table.concat(row) }
+      lnum,
+      origin[2],
+      lnum,
+      #line,
+      { table.concat(cells, "", 1, board.width) }
     )
-  end
-  self:enable_modification(false)
 
-  -- update extended marks
-  for y = y1, y2 do
-    local i = self.game.board:index(x1, y)
-    local mark_y = top_left_pos[1] + y - y1
-    for x = x1, x2 do
-      local mark_x = top_left_pos[2] + x - x1
+    -- update extended marks
+    for x = 0, board.width - 1 do
+      local i = row_i + x
+      local mark_x = origin[2] + offsets[x + 1]
       self.board_extmarks[i] = api.nvim_buf_set_extmark(
         self.buf,
         ns,
-        mark_y,
+        lnum,
         mark_x,
         {
           id = self.board_extmarks[i],
-          end_col = mark_x + 1,
+          end_col = origin[2] + offsets[x + 2],
           hl_group = self:board_square_hl_group(i),
         }
       )
-      i = i + 1
+    end
+  end
+  self:enable_modification(false)
+
+  for _, cursor in ipairs(cursors) do
+    if
+      api.nvim_win_is_valid(cursor.win)
+      and api.nvim_win_get_buf(cursor.win) == self.buf
+    then
+      local pos = self:board_square_pos(cursor.square)
+      api.nvim_win_set_cursor(cursor.win, { pos[1] + 1, pos[2] })
     end
   end
 end
@@ -205,8 +248,9 @@ function Ui:full_redraw()
 
   -- usually, only the changed area of the board is updated, which requires the
   -- lines to already exist, so create filler lines to fit the entire board
-  local left_pad = centering_left_pad(self, self.game.board.width)
-  local line = string.rep(" ", left_pad + self.game.board.width)
+  local board_cols = self.game.board.width * CELL_WIDTH
+  local left_pad = centering_left_pad(self, board_cols)
+  local line = string.rep(" ", left_pad + board_cols)
   local lines = {}
   for i = 1, self.game.board.height do
     lines[i] = line
@@ -255,13 +299,39 @@ end
 
 -- uses current window cursor position if wx is nil
 function Ui:win_to_board_pos(wx, wy)
-  local board_pos = self:board_square_pos(1)
+  local origin = self:board_square_pos(1)
   if not wx then
     local cursor_pos = api.nvim_win_get_cursor(0)
     -- nvim_win_get_cursor gives 1-indexed rows
     wx, wy = cursor_pos[2], cursor_pos[1] - 1
   end
-  return wx - board_pos[2], wy - board_pos[1]
+
+  local board = self.game.board
+  local y = wy - origin[1]
+  if y < 0 or y >= board.height or wx < origin[2] then
+    return -1, -1
+  end
+
+  -- squares may have varying byte widths; find the one containing this column
+  local x = 0
+  for bx = board.width - 1, 1, -1 do
+    local pos = self:board_square_pos(board:index(bx, y))
+    if wx >= pos[2] then
+      x = bx
+      break
+    end
+  end
+  return x, y
+end
+
+-- moves the cursor by the given number of squares, clamped to the board
+function Ui:move_cursor(dx, dy)
+  local x, y = self:win_to_board_pos()
+  local board = self.game.board
+  x = math.min(math.max(x + dx, 0), board.width - 1)
+  y = math.min(math.max(y + dy, 0), board.height - 1)
+  local pos = self:board_square_pos(board:index(x, y))
+  api.nvim_win_set_cursor(0, { pos[1] + 1, pos[2] })
 end
 
 local function create_window(ui, float_opts)
@@ -334,10 +404,22 @@ end
 local function move_cursor_to_click()
   fn.getchar()
   if api.nvim_get_vvar "mouse_winid" == api.nvim_get_current_win() then
-    api.nvim_win_set_cursor(
-      0,
-      { api.nvim_get_vvar "mouse_lnum", api.nvim_get_vvar "mouse_col" - 1 }
-    )
+    local lnum = api.nvim_get_vvar "mouse_lnum"
+    local vcol = api.nvim_get_vvar "mouse_col"
+
+    -- convert the clicked screen column to a byte column
+    local line = api.nvim_buf_get_lines(0, lnum - 1, lnum, false)[1] or ""
+    local width, byte = 0, 0
+    for _, char in ipairs(fn.split(line, "\\zs")) do
+      local char_width = fn.strdisplaywidth(char)
+      if width + char_width >= vcol then
+        break
+      end
+      width = width + char_width
+      byte = byte + #char
+    end
+
+    api.nvim_win_set_cursor(0, { lnum, byte })
   end
 end
 
@@ -358,7 +440,7 @@ function M.new_ui(game, open_tab)
 
   if
     not create_window(ui, not open_tab and {
-      width = math.max(42, game.board.width),
+      width = math.max(42, game.board.width * CELL_WIDTH),
       height = game.board.height + 2,
     } or nil)
   then
@@ -398,6 +480,19 @@ function M.new_ui(game, open_tab)
   util.nnoremap(buf, "?", function()
     game_mod.place_marker(board_mod.SQUARE_MAYBE)
   end, "Mark square")
+
+  -- squares are wider than one character, so move the cursor square-wise
+  local movements = {
+    { { "h", "<Left>" }, -1, 0, "Move to the square to the left" },
+    { { "l", "<Right>" }, 1, 0, "Move to the square to the right" },
+    { { "j", "<Down>" }, 0, 1, "Move to the square below" },
+    { { "k", "<Up>" }, 0, -1, "Move to the square above" },
+  }
+  for _, movement in ipairs(movements) do
+    util.nnoremap(buf, movement[1], function()
+      ui:move_cursor(movement[2], movement[3])
+    end, movement[4])
+  end
 
   api.nvim_create_autocmd({ "BufDelete", "VimLeavePre" }, {
     buffer = buf,

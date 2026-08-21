@@ -33,17 +33,34 @@ local default_config = {
   board_chars = {
     unrevealed = " ",
     revealed = " ",
-    mine = "*",
-    flag = "!",
-    flag_wrong = "X",
-    maybe = "?",
+    mine = "💣",
+    flag = "🚩",
+    flag_wrong = "❌",
+    maybe = "❓",
   },
 }
 
 local M = {}
 
+local function validate_board_chars(board_chars)
+  for name in pairs(default_config.board_chars) do
+    local char = board_chars[name]
+    if type(char) ~= "string" then
+      error('[nvimesweeper] board_chars."' .. name .. '" must be a string')
+    elseif vim.fn.strdisplaywidth(char) > 2 then
+      error(
+        '[nvimesweeper] board_chars."'
+          .. name
+          .. '" must be at most 2 screen columns wide'
+      )
+    end
+  end
+end
+
 function M.apply_config(config)
-  M.config = vim.tbl_deep_extend("force", default_config, config)
+  local merged = vim.tbl_deep_extend("force", default_config, config)
+  validate_board_chars(merged.board_chars)
+  M.config = merged
 end
 
 return M

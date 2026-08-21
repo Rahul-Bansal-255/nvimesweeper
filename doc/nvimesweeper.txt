@@ -123,6 +123,15 @@ In a game of Nvimesweeper, these buffer-local mappings are defined:
 			revealed. Useful for marking a square to be revisited
 			later if you are unsure.
 
+			*nvimesweeper_h* *nvimesweeper_j* *nvimesweeper_k*
+			*nvimesweeper_l* *nvimesweeper_<Left>*
+			*nvimesweeper_<Down>* *nvimesweeper_<Up>*
+			*nvimesweeper_<Right>*
+h j k l			Move the cursor square-by-square across the board.
+<Left> <Down>		Board squares are drawn wider than a single
+<Up> <Right>		character, so these motions snap the cursor to the
+			start of the adjacent square.
+
 ==============================================================================
 READING THE BOARD				*nvimesweeper-board*
 
@@ -134,20 +143,23 @@ Nvimesweeper represents the board state by displaying various symbols:
 			directly adjacent to the square, in all 8 directions.
 
 						*nvimesweeper-mine*
-*			This is a mine. If you reveal this, you lose.
+💣			This is a mine. If you reveal this, you lose.
 			All mines are revealed at the end of a game, except
 			for correctly flagged mines.
 
 						*nvimesweeper-flag*
-!			This is an unrevealed square that you have flagged as
+🚩			This is an unrevealed square that you have flagged as
 			dangerous.
 
 						*nvimesweeper-mark*
-?			This is an unrevealed square that has been marked.
+❓			This is an unrevealed square that has been marked.
 
 						*nvimesweeper-wrong*
-X			At the end of a game, all flagged squares that did not
+❌			At the end of a game, all flagged squares that did not
 			contain a mine are revealed with this symbol.
+
+These symbols may be customized with the "board_chars" configuration; see
+|nvimesweeper.setup()|.
 
 ==============================================================================
 LUA FUNCTIONS					*nvimesweeper-lua-functions*
@@ -193,7 +205,10 @@ setup([{config}])	Provide the configuration to be used. Calling this is
 			if passed as an argument to |:Nvimesweeper|.
 
 			"board_chars":	table of characters to use as board
-			square symbols. Has the following keys:
+			square symbols. Characters narrower than a board
+			square (2 screen columns) are padded with spaces;
+			wider characters are rejected.
+			Has the following keys:
 
 			    "unrevealed": used for an unrevealed square.
 
@@ -201,14 +216,17 @@ setup([{config}])	Provide the configuration to be used. Calling this is
 			    no flags, markers or adjacent mines.
 
 			    "mine": used for a revealed mine.
+			    Defaults to "💣".
 
 			    "flag": used for a flagged square.
+			    Defaults to "🚩".
 
 			    "maybe": used for marked squares.
+			    Defaults to "❓".
 
 			    "flag_wrong": used for a flagged square that was
 			    revealed to not have contained a mine at the end
-			    of the game.
+			    of the game. Defaults to "❌".
 
 			Example: >
 
@@ -254,14 +272,22 @@ NvimesweeperTooManyFlags	Used in the status message to indicate that
 				number of mines. This means some flags must
 				have been placed incorrectly.
 
-						*hl-NvimesweeperUnrevealed*
+		*hl-NvimesweeperUnrevealed* *hl-NvimesweeperUnrevealedAlt*
 NvimesweeperUnrevealed	Used for unrevealed squares without a flag or a mark.
+NvimesweeperUnrevealedAlt
+			Unrevealed squares alternate between the normal and
+			"Alt" variants of their highlight groups in a
+			checkerboard pattern.
 
 						*hl-NvimesweeperFlag*
+						*hl-NvimesweeperFlagAlt*
 NvimesweeperFlag	Used for unrevealed squares with a flag.
+NvimesweeperFlagAlt
 
 						*hl-NvimesweeperMaybe*
+						*hl-NvimesweeperMaybeAlt*
 NvimesweeperMaybe	Used for unrevealed squares with a mark.
+NvimesweeperMaybeAlt
 
 						*hl-NvimesweeperTriggeredMine*
 NvimesweeperTriggeredMine	Used for the mine that caused the game to end
@@ -272,7 +298,9 @@ NvimesweeperMine	Used for automatically revealed mines at the end of a
 			game.
 
 						*hl-NvimesweeperFlagWrong*
+						*hl-NvimesweeperFlagWrongAlt*
 NvimesweeperFlagWrong	Used for automatically revealed flagged squares that
+NvimesweeperFlagWrongAlt
 			did not contain a mine at the end of a game.
 
 						*hl-NvimesweeperRevealed*

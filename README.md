@@ -15,9 +15,9 @@ is no longer maintained._
 Install it using your favourite package manager like any other plugin, then run
 `:Nvimesweeper` and pray that it works properly, I guess.
 
-- Press `!` to flag a square.
-- Press `?` to mark a square for later.
-- Press `<Space>` or `<RightMouse>` to cycle between `!`, `?` and unmarking a
+- Press `!` to flag a square with a 🚩.
+- Press `?` to mark a square with a ❓ for later.
+- Press `<Space>` or `<RightMouse>` to cycle between 🚩, ❓ and unmarking a
   square.
 - Press `<CR>`, `x` or `<LeftMouse>` to reveal a square; just try not to step on
   a mine!
