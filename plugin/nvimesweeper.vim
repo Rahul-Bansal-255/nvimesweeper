@@ -23,7 +23,7 @@ function! s:DefineHighlights() abort
     highlight default link NvimesweeperTooManyFlags WarningMsg
 
     " title and footer text in the floating window's border
-    highlight default NvimesweeperFloatTitle FloatBorder
+    highlight default link NvimesweeperFloatTitle FloatBorder
     highlight default link NvimesweeperFloatFooter FloatBorder
 
     " de-emphasised status message text, such as the game's seed
