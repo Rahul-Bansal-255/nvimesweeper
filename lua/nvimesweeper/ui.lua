@@ -593,24 +593,20 @@ function Ui:float_config()
     style = "minimal",
     border = "rounded",
   }
-  if fn.has "nvim-0.9" == 1 then
-    config.title = {
-      {
-        string.format(
-          " nvimesweeper %dx%d, %d mines ",
-          board.width,
-          board.height,
-          board.mine_count
-        ),
-        "NvimesweeperFloatTitle",
-      },
-    }
-    config.title_pos = "center"
-  end
-  if fn.has "nvim-0.10" == 1 then
-    config.footer = { { " q: close │ F1: help ", "NvimesweeperFloatFooter" } }
-    config.footer_pos = "center"
-  end
+  config.title = {
+    {
+      string.format(
+        " nvimesweeper %dx%d, %d mines ",
+        board.width,
+        board.height,
+        board.mine_count
+      ),
+      "NvimesweeperFloatTitle",
+    },
+  }
+  config.title_pos = "center"
+  config.footer = { { " q: close │ F1: help ", "NvimesweeperFloatFooter" } }
+  config.footer_pos = "center"
   return config
 end
 
