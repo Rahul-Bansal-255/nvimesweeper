@@ -22,6 +22,14 @@ function! s:DefineHighlights() abort
     highlight default link NvimesweeperLose ErrorMsg
     highlight default link NvimesweeperTooManyFlags WarningMsg
 
+    " title and footer text in the floating window's border
+    highlight default NvimesweeperFloatTitle ctermfg=Green cterm=bold
+                \ guifg=#aad751 gui=bold
+    highlight default link NvimesweeperFloatFooter FloatBorder
+
+    " de-emphasised status message text, such as the game's seed
+    highlight default link NvimesweeperDim Comment
+
     " drawn over the square under the cursor
     highlight default NvimesweeperCursor cterm=bold,underline
                 \ gui=bold,underline guisp=#212121

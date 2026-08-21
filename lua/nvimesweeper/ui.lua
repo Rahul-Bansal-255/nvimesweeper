@@ -109,6 +109,7 @@ function Ui:redraw_status()
 
   local state = self.game.state
   local hl_col1, hl_col2, hl_group
+  local hl2_col1, hl2_col2, hl2_group
   local status = { "", "" }
   if game_state.is_game_over(state) then
     self.final_time = elapsed_time()
@@ -121,7 +122,12 @@ function Ui:redraw_status()
     end
     hl_col1, hl_col2 = 0, #status[1]
     status[1] = status[1] .. " " .. time_string(true)
-    status[2] = "Seed: " .. self.game.seed .. "    q to close"
+    status[2] = "Seed: " .. self.game.seed
+    -- redundant for floats that show the controls in their footer (0.10+)
+    if not (self.float and fn.has "nvim-0.10" == 1) then
+      status[2] = status[2] .. "    q to close"
+    end
+    hl2_col1, hl2_col2, hl2_group = 0, #status[2], "NvimesweeperDim"
   else
     local flags = flags_string()
     status[1] = "🙂 " .. time_string() .. "    " .. flags
@@ -159,6 +165,23 @@ function Ui:redraw_status()
   elseif self.status_hl_extmark then
     api.nvim_buf_del_extmark(self.buf, ns, self.status_hl_extmark)
     self.status_hl_extmark = nil
+  end
+
+  if hl2_col1 then
+    self.status_hl_extmark2 = api.nvim_buf_set_extmark(
+      self.buf,
+      ns,
+      1,
+      hl2_col1 + left_pads[2],
+      {
+        id = self.status_hl_extmark2,
+        end_col = hl2_col2 + left_pads[2],
+        hl_group = hl2_group,
+      }
+    )
+  elseif self.status_hl_extmark2 then
+    api.nvim_buf_del_extmark(self.buf, ns, self.status_hl_extmark2)
+    self.status_hl_extmark2 = nil
   end
 end
 
@@ -571,13 +594,22 @@ function Ui:float_config()
     border = "rounded",
   }
   if fn.has "nvim-0.9" == 1 then
-    config.title = string.format(
-      " nvimesweeper %dx%d, %d mines ",
-      board.width,
-      board.height,
-      board.mine_count
-    )
+    config.title = {
+      {
+        string.format(
+          " nvimesweeper %dx%d, %d mines ",
+          board.width,
+          board.height,
+          board.mine_count
+        ),
+        "NvimesweeperFloatTitle",
+      },
+    }
     config.title_pos = "center"
+  end
+  if fn.has "nvim-0.10" == 1 then
+    config.footer = { { " q: close │ F1: help ", "NvimesweeperFloatFooter" } }
+    config.footer_pos = "center"
   end
   return config
 end

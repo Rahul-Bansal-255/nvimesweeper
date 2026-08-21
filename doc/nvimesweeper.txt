@@ -285,6 +285,19 @@ NvimesweeperTooManyFlags	Used in the status message to indicate that
 				number of mines. This means some flags must
 				have been placed incorrectly.
 
+						*hl-NvimesweeperFloatTitle*
+NvimesweeperFloatTitle	Used for the game title in the floating window's
+			border. Requires Neovim 0.9 or newer.
+
+						*hl-NvimesweeperFloatFooter*
+NvimesweeperFloatFooter	Used for the floating window's footer, which shows
+			some of the game's controls. Requires Neovim 0.10 or
+			newer.
+
+						*hl-NvimesweeperDim*
+NvimesweeperDim		Used for de-emphasised status message text, such as
+			the game's seed.
+
 						*hl-NvimesweeperCursor*
 NvimesweeperCursor	Drawn over the square under the cursor, on top of
 			that square's own highlight.
