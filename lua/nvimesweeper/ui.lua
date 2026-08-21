@@ -18,16 +18,55 @@ function Ui:enable_modification(enable)
   api.nvim_buf_set_option(self.buf, "modifiable", enable)
 end
 
-local function centering_left_pad(ui, len)
-  if not ui.centered then
-    return 0
-  end
-  local pad = (api.nvim_win_get_width(0) - len) / 2
-  return math.floor(math.max(0, pad))
-end
-
 -- board squares are drawn this many screen columns wide
 local CELL_WIDTH = 2
+-- lines reserved above the board for the status message
+local STATUS_HEIGHT = 2
+-- floating windows are never narrower than this, so the status message fits
+local MIN_FLOAT_WIDTH = 42
+
+-- the window the game is being played in: the current one if it shows the game
+-- buffer, else the last known one, else any other window showing it
+function Ui:window()
+  local current = api.nvim_get_current_win()
+  if api.nvim_win_get_buf(current) == self.buf then
+    self.win = current
+    return current
+  end
+
+  if
+    self.win
+    and api.nvim_win_is_valid(self.win)
+    and api.nvim_win_get_buf(self.win) == self.buf
+  then
+    return self.win
+  end
+
+  for _, win in ipairs(api.nvim_list_wins()) do
+    if api.nvim_win_get_buf(win) == self.buf then
+      self.win = win
+      return win
+    end
+  end
+  return nil
+end
+
+-- whether every square has an extmark marking where it is drawn
+function Ui:board_drawn()
+  local board = self.game.board
+  return self.board_extmarks[board.width * board.height] ~= nil
+end
+
+function Ui:width()
+  local win = self:window()
+  return win and api.nvim_win_get_width(win)
+    or self.game.board.width * CELL_WIDTH
+end
+
+-- content is centered within the game window, never against another window
+local function centering_left_pad(ui, len)
+  return math.max(0, math.floor((ui:width() - len) / 2))
+end
 
 local function pad_cell(char)
   local pad = CELL_WIDTH - fn.strdisplaywidth(char)
@@ -35,8 +74,17 @@ local function pad_cell(char)
 end
 
 function Ui:redraw_status()
+  -- the clock stops once the game is over, so that later redraws (after a
+  -- resize, for example) don't keep advancing the final time
+  local function elapsed_time()
+    if not self.game.start_time then
+      return 0
+    end
+    return self.final_time or (uv.hrtime() - self.game.start_time)
+  end
+
   local function time_string(show_ms)
-    local nanoseconds = uv.hrtime() - self.game.start_time
+    local nanoseconds = elapsed_time()
     local seconds = math.floor(nanoseconds / 1000000000)
     local minutes = math.floor(seconds / 60)
 
@@ -48,30 +96,42 @@ function Ui:redraw_status()
     return time
   end
 
+  local board = self.game.board
+  -- the flag count is padded so that the status width, and thus the centering
+  -- of every line, stays put as flags are placed
+  local function flags_string()
+    return string.format(
+      "🚩 %" .. #tostring(board.mine_count) .. "d/%d",
+      board.flag_count,
+      board.mine_count
+    )
+  end
+
   local state = self.game.state
   local hl_col1, hl_col2, hl_group
   local status = { "", "" }
-  if state == game_state.GAME_NOT_STARTED then
-    status[1] = "🙂 Reveal a square or press F1 for help."
-  elseif state == game_state.GAME_STARTED then
-    local board = self.game.board
-    local flags = string.format("🚩 %d/%d", board.flag_count, board.mine_count)
-    status[1] = "🙂 " .. time_string() .. "    " .. flags
-    if board.flag_count > board.mine_count then
-      hl_col1 = #status[1] - #flags
-      hl_col2, hl_group = #status[1], "NvimesweeperTooManyFlags"
-    end
-  elseif game_state.is_game_over(state) then
+  if game_state.is_game_over(state) then
+    self.final_time = elapsed_time()
     if state == game_state.GAME_WON then
       status[1] = "😎 Congratulations, you win!"
       hl_group = "NvimesweeperWin"
-    elseif state == game_state.GAME_LOST then
+    else
       status[1] = "💥 KA-BOOM! You explode..."
       hl_group = "NvimesweeperLose"
     end
     hl_col1, hl_col2 = 0, #status[1]
     status[1] = status[1] .. " " .. time_string(true)
-    status[2] = "Seed: " .. self.game.seed
+    status[2] = "Seed: " .. self.game.seed .. "    q to close"
+  else
+    local flags = flags_string()
+    status[1] = "🙂 " .. time_string() .. "    " .. flags
+    if board.flag_count > board.mine_count then
+      hl_col1 = #status[1] - #flags
+      hl_col2, hl_group = #status[1], "NvimesweeperTooManyFlags"
+    end
+    if state == game_state.GAME_NOT_STARTED then
+      status[2] = "Reveal a square to start    F1 for help"
+    end
   end
 
   local left_pads = {}
@@ -81,7 +141,7 @@ function Ui:redraw_status()
   end
 
   self:enable_modification(true)
-  api.nvim_buf_set_lines(self.buf, 0, 2, false, status)
+  api.nvim_buf_set_lines(self.buf, 0, STATUS_HEIGHT, false, status)
   self:enable_modification(false)
 
   if hl_col1 then
@@ -241,13 +301,15 @@ function Ui:redraw_board(_, y1, _, y2)
       api.nvim_win_set_cursor(cursor.win, { pos[1] + 1, pos[2] })
     end
   end
+
+  self:update_cursor()
 end
 
 function Ui:full_redraw()
   self:redraw_status()
 
   -- usually, only the changed area of the board is updated, which requires the
-  -- lines to already exist, so create filler lines to fit the entire board
+  -- lines to already exist, so (re)create filler lines to fit the entire board
   local board_cols = self.game.board.width * CELL_WIDTH
   local left_pad = centering_left_pad(self, board_cols)
   local line = string.rep(" ", left_pad + board_cols)
@@ -257,16 +319,64 @@ function Ui:full_redraw()
   end
 
   self:enable_modification(true)
-  api.nvim_buf_set_lines(self.buf, -1, -1, false, lines)
+  api.nvim_buf_set_lines(self.buf, STATUS_HEIGHT, -1, false, lines)
 
   -- place an extmark for the board's top-left corner so it knows where to draw
-  self.board_extmarks[1] = api.nvim_buf_set_extmark(self.buf, ns, 2, left_pad, {
-    id = self.board_extmarks[1],
-  })
+  self.board_extmarks[1] = api.nvim_buf_set_extmark(
+    self.buf,
+    ns,
+    STATUS_HEIGHT,
+    left_pad,
+    { id = self.board_extmarks[1] }
+  )
+  self.layout_width = self:width()
   self:redraw_board()
 end
 
+local function set_window_options(win)
+  api.nvim_win_set_option(win, "wrap", false)
+  api.nvim_win_set_option(win, "list", false)
+  api.nvim_win_set_option(win, "spell", false)
+  api.nvim_win_set_option(win, "number", false)
+  api.nvim_win_set_option(win, "relativenumber", false)
+  api.nvim_win_set_option(win, "cursorline", false)
+  api.nvim_win_set_option(win, "signcolumn", "no")
+  api.nvim_win_set_option(win, "foldcolumn", "0")
+  -- keep the view still when moving along the edges of a clipped board
+  api.nvim_win_set_option(win, "scrolloff", 0)
+  api.nvim_win_set_option(win, "sidescrolloff", 0)
+end
+
+-- redraws everything if the window was resized, keeping the game centered
+function Ui:relayout()
+  local win = self:window()
+  if not win or not api.nvim_buf_is_loaded(self.buf) then
+    return
+  end
+
+  -- window-local options don't follow the buffer: a window the game buffer is
+  -- re-shown in (via :b, say) needs them set again
+  set_window_options(win)
+
+  if self.float then
+    api.nvim_win_set_config(win, self:float_config())
+  end
+  if self:width() == self.layout_width then
+    return
+  end
+
+  local square = self:cursor_square()
+  self:full_redraw()
+  if square then
+    self:set_cursor_square(square)
+  end
+end
+
 function Ui:start_status_redraw()
+  if not self.redraw_status_timer then
+    return
+  end
+
   self.redraw_status_timer:start(
     0,
     1000,
@@ -279,11 +389,24 @@ function Ui:start_status_redraw()
 end
 
 function Ui:stop_status_redraw()
-  self.redraw_status_timer:stop()
+  if self.redraw_status_timer then
+    self.redraw_status_timer:stop()
+  end
 end
 
+-- releases every resource the game holds; safe to call more than once
 function Ui:cleanup()
   self:stop_status_redraw()
+  if self.redraw_status_timer then
+    if not self.redraw_status_timer:is_closing() then
+      self.redraw_status_timer:close()
+    end
+    self.redraw_status_timer = nil
+  end
+  if self.augroup then
+    pcall(api.nvim_del_augroup_by_id, self.augroup)
+    self.augroup = nil
+  end
   M.uis[self.buf] = nil
 end
 
@@ -324,31 +447,145 @@ function Ui:win_to_board_pos(wx, wy)
   return x, y
 end
 
--- moves the cursor by the given number of squares, clamped to the board
-function Ui:move_cursor(dx, dy)
-  local x, y = self:win_to_board_pos()
+-- like win_to_board_pos, but positions outside of the board are clamped to the
+-- nearest square instead of being rejected
+function Ui:clamp_to_board(wx, wy)
+  local origin = self:board_square_pos(1)
   local board = self.game.board
-  x = math.min(math.max(x + dx, 0), board.width - 1)
-  y = math.min(math.max(y + dy, 0), board.height - 1)
-  local pos = self:board_square_pos(board:index(x, y))
-  api.nvim_win_set_cursor(0, { pos[1] + 1, pos[2] })
+  local y = math.min(math.max(wy - origin[1], 0), board.height - 1)
+
+  local x = 0
+  for bx = board.width - 1, 1, -1 do
+    local pos = self:board_square_pos(board:index(bx, y))
+    if wx >= pos[2] then
+      x = bx
+      break
+    end
+  end
+  return x, y
 end
 
-local function create_window(ui, float_opts)
-  local win
-  if float_opts then
-    win = api.nvim_open_win(ui.buf, true, {
-      relative = "editor",
-      width = float_opts.width,
-      height = float_opts.height,
-      row = math.max(
-        0,
-        math.floor((api.nvim_get_option "lines" - float_opts.height) / 2) - 1
-      ),
-      col = math.floor((api.nvim_get_option "columns" - float_opts.width) / 2),
-      style = "minimal",
-      border = "single",
+function Ui:cursor_square()
+  local win = self:window()
+  if not win or not self:board_drawn() then
+    return nil
+  end
+
+  local cursor = api.nvim_win_get_cursor(win)
+  local x, y = self:clamp_to_board(cursor[2], cursor[1] - 1)
+  return self.game.board:index(x, y)
+end
+
+function Ui:set_cursor_square(i)
+  local win = self:window()
+  if not win or not self.board_extmarks[i] then
+    return
+  end
+
+  local pos = self:board_square_pos(i)
+  api.nvim_win_set_cursor(win, { pos[1] + 1, pos[2] })
+end
+
+-- keeps the cursor on a board square and highlights the square it is on
+function Ui:update_cursor()
+  local win = self:window()
+  if not win or not self:board_drawn() then
+    return
+  end
+
+  local board = self.game.board
+  local cursor = api.nvim_win_get_cursor(win)
+  local x, y = self:clamp_to_board(cursor[2], cursor[1] - 1)
+  local pos = self:board_square_pos(board:index(x, y))
+  if pos[1] ~= cursor[1] - 1 or pos[2] ~= cursor[2] then
+    api.nvim_win_set_cursor(win, { pos[1] + 1, pos[2] })
+  end
+
+  -- the last square of a row extends to the end of its line
+  local end_col
+  if x + 1 < board.width then
+    end_col = self:board_square_pos(board:index(x + 1, y))[2]
+  else
+    end_col = #api.nvim_buf_get_lines(self.buf, pos[1], pos[1] + 1, true)[1]
+  end
+
+  self.cursor_extmark =
+    api.nvim_buf_set_extmark(self.buf, ns, pos[1], pos[2], {
+      id = self.cursor_extmark,
+      end_col = end_col,
+      hl_group = "NvimesweeperCursor",
+      -- drawn on top of the square's own highlight
+      priority = 4200,
     })
+end
+
+-- moves the cursor by the given number of squares, clamped to the board
+function Ui:move_cursor(dx, dy)
+  local i = self:cursor_square()
+  if not i then
+    return
+  end
+
+  local board = self.game.board
+  local x, y = (i - 1) % board.width, math.floor((i - 1) / board.width)
+  x = math.min(math.max(x + dx, 0), board.width - 1)
+  y = math.min(math.max(y + dy, 0), board.height - 1)
+  self:set_cursor_square(board:index(x, y))
+end
+
+function Ui:close()
+  local win = self:window()
+  if not win then
+    return
+  end
+
+  -- the last window cannot be closed
+  if #api.nvim_list_wins() == 1 then
+    vim.notify(
+      "[nvimesweeper] cannot close the last window!",
+      vim.log.levels.WARN
+    )
+    return
+  end
+  pcall(api.nvim_win_close, win, true)
+end
+
+-- the game is always centered on the screen and never larger than it, so that
+-- resizing the editor can never leave part of the board off-screen
+function Ui:float_config()
+  local board = self.game.board
+  local columns, lines =
+    api.nvim_get_option "columns", api.nvim_get_option "lines"
+
+  local width = math.max(MIN_FLOAT_WIDTH, board.width * CELL_WIDTH)
+  width = math.max(1, math.min(width, columns - 4))
+  local height = math.max(1, math.min(board.height + STATUS_HEIGHT, lines - 4))
+
+  local config = {
+    relative = "editor",
+    width = width,
+    height = height,
+    row = math.max(0, math.floor((lines - height) / 2) - 1),
+    col = math.max(0, math.floor((columns - width) / 2)),
+    style = "minimal",
+    border = "rounded",
+  }
+  if fn.has "nvim-0.9" == 1 then
+    config.title = string.format(
+      " nvimesweeper %dx%d, %d mines ",
+      board.width,
+      board.height,
+      board.mine_count
+    )
+    config.title_pos = "center"
+  end
+  return config
+end
+
+local function create_window(ui, float)
+  local win
+  if float then
+    win = api.nvim_open_win(ui.buf, true, ui:float_config())
     win = win ~= 0 and win or nil
   else
     local ok, _ = pcall(vim.cmd, "tab sbuffer " .. ui.buf)
@@ -361,7 +598,7 @@ local function create_window(ui, float_opts)
     return false
   end
 
-  if float_opts then
+  if float then
     api.nvim_buf_set_option(ui.buf, "bufhidden", "wipe")
 
     -- Schedule the deletion. NOTE: if we don't schedule, this can cause issues
@@ -380,6 +617,7 @@ local function create_window(ui, float_opts)
     -- BufLeave instead: https://github.com/neovim/neovim/pull/15549 -- So, you
     -- can say this silly Minesweeper clone helped improve Neovim... :P
     api.nvim_create_autocmd("WinLeave", {
+      group = ui.augroup,
       buffer = ui.buf,
       once = true,
       callback = function()
@@ -390,37 +628,43 @@ local function create_window(ui, float_opts)
         end)
       end,
     })
-  else
-    -- float "minimal" style already sets these
-    api.nvim_win_set_option(win, "list", false)
-    api.nvim_win_set_option(win, "spell", false)
   end
-  ui.centered = float_opts ~= nil
 
-  api.nvim_win_set_option(win, "wrap", false)
+  ui.win = win
+  ui.float = float
+  set_window_options(win)
   return true
 end
 
-local function move_cursor_to_click()
+-- moves the cursor to the clicked position and returns the clicked board
+-- position; returns nothing if the click happened in another window
+local function move_cursor_to_click(ui)
   fn.getchar()
-  if api.nvim_get_vvar "mouse_winid" == api.nvim_get_current_win() then
-    local lnum = api.nvim_get_vvar "mouse_lnum"
-    local vcol = api.nvim_get_vvar "mouse_col"
-
-    -- convert the clicked screen column to a byte column
-    local line = api.nvim_buf_get_lines(0, lnum - 1, lnum, false)[1] or ""
-    local width, byte = 0, 0
-    for _, char in ipairs(fn.split(line, "\\zs")) do
-      local char_width = fn.strdisplaywidth(char)
-      if width + char_width >= vcol then
-        break
-      end
-      width = width + char_width
-      byte = byte + #char
-    end
-
-    api.nvim_win_set_cursor(0, { lnum, byte })
+  if api.nvim_get_vvar "mouse_winid" ~= api.nvim_get_current_win() then
+    return
   end
+
+  local lnum = api.nvim_get_vvar "mouse_lnum"
+  local vcol = api.nvim_get_vvar "mouse_col"
+
+  -- convert the clicked screen column to a byte column
+  local line = api.nvim_buf_get_lines(0, lnum - 1, lnum, false)[1] or ""
+  local width, byte = 0, 0
+  for _, char in ipairs(fn.split(line, "\\zs")) do
+    local char_width = fn.strdisplaywidth(char)
+    if width + char_width >= vcol then
+      break
+    end
+    width = width + char_width
+    byte = byte + #char
+  end
+
+  -- resolve the square before moving the cursor: the CursorMoved autocommand
+  -- snaps the cursor onto the nearest board square, and clicks outside of the
+  -- board must not act on it
+  local x, y = ui:win_to_board_pos(byte, lnum - 1)
+  api.nvim_win_set_cursor(0, { lnum, byte })
+  return x, y
 end
 
 function M.new_ui(game, open_tab)
@@ -434,17 +678,15 @@ function M.new_ui(game, open_tab)
     game = game,
     board_extmarks = {},
     redraw_status_timer = uv.new_timer(),
+    augroup = api.nvim_create_augroup("nvimesweeper_ui_" .. buf, {}),
   }, {
     __index = Ui,
   })
+  M.uis[buf] = ui
 
-  if
-    not create_window(ui, not open_tab and {
-      width = math.max(42, game.board.width * CELL_WIDTH),
-      height = game.board.height + 2,
-    } or nil)
-  then
+  if not create_window(ui, not open_tab) then
     api.nvim_buf_delete(buf, { force = true })
+    ui:cleanup()
     error "failed to open game window!"
   end
 
@@ -463,12 +705,10 @@ function M.new_ui(game, open_tab)
 
   local game_mod = require "nvimesweeper.game"
   util.nnoremap(buf, "<LeftMouse>", function()
-    move_cursor_to_click()
-    game_mod.reveal()
+    game_mod.reveal(nil, move_cursor_to_click(ui))
   end, "Reveal square using the mouse")
   util.nnoremap(buf, "<RightMouse>", function()
-    move_cursor_to_click()
-    game_mod.place_marker()
+    game_mod.place_marker(nil, nil, move_cursor_to_click(ui))
   end, "Cycle square marker using the mouse")
 
   util.nnoremap(buf, { "<CR>", "x" }, game_mod.reveal, "Reveal square")
@@ -480,6 +720,10 @@ function M.new_ui(game, open_tab)
   util.nnoremap(buf, "?", function()
     game_mod.place_marker(board_mod.SQUARE_MAYBE)
   end, "Mark square")
+
+  util.nnoremap(buf, "q", function()
+    ui:close()
+  end, "Close the game window")
 
   -- squares are wider than one character, so move the cursor square-wise
   local movements = {
@@ -495,19 +739,44 @@ function M.new_ui(game, open_tab)
   end
 
   api.nvim_create_autocmd({ "BufDelete", "VimLeavePre" }, {
+    group = ui.augroup,
     buffer = buf,
     once = true,
     callback = function()
-      M.uis[buf]:cleanup()
+      local buf_ui = M.uis[buf]
+      if buf_ui then
+        buf_ui:cleanup()
+      end
+    end,
+  })
+
+  -- the cursor always sits on a square, even after motions that don't know
+  -- about the board, such as those of the mouse or a search
+  api.nvim_create_autocmd("CursorMoved", {
+    group = ui.augroup,
+    buffer = buf,
+    callback = function()
+      ui:update_cursor()
+    end,
+  })
+
+  -- the game is centered, so it must be redrawn whenever its width may change
+  api.nvim_create_autocmd({ "BufWinEnter", "WinEnter" }, {
+    group = ui.augroup,
+    buffer = buf,
+    callback = function()
+      ui:relayout()
+    end,
+  })
+  api.nvim_create_autocmd("VimResized", {
+    group = ui.augroup,
+    callback = function()
+      ui:relayout()
     end,
   })
 
   ui:full_redraw()
-  local board_pos = ui:board_square_pos(1)
-  board_pos[1] = board_pos[1] + 1 -- nvim_win_set_cursor takes a 1-indexed row
-  api.nvim_win_set_cursor(0, board_pos)
-
-  M.uis[buf] = ui
+  ui:set_cursor_square(1)
   return ui
 end
 

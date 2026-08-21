@@ -26,7 +26,8 @@ end
 
 local function action_args(buf, x, y)
   buf = buf or api.nvim_get_current_buf()
-  local game = ui_mod.uis[buf].game
+  local ui = ui_mod.uis[buf]
+  local game = ui and ui.game
   if not game then
     return nil
   end
@@ -41,7 +42,7 @@ end
 function M.place_marker(new_state, buf, x, y)
   local game, nx, ny, i = action_args(buf, x, y)
   x, y = nx, ny
-  if game_state.is_game_over(game.state) or not i then
+  if not game or game_state.is_game_over(game.state) or not i then
     return false
   end
 
@@ -70,7 +71,7 @@ end
 function M.reveal(buf, x, y)
   local game, nx, ny, i = action_args(buf, x, y)
   x, y = nx, ny
-  if game_state.is_game_over(game.state) or not i then
+  if not game or game_state.is_game_over(game.state) or not i then
     return false
   end
 

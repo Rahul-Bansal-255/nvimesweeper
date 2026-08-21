@@ -132,6 +132,19 @@ h j k l			Move the cursor square-by-square across the board.
 <Up> <Right>		character, so these motions snap the cursor to the
 			start of the adjacent square.
 
+			Other motions are allowed too; the cursor is always
+			snapped to the nearest square afterwards, and the
+			square it rests on is highlighted with
+			|hl-NvimesweeperCursor|.
+
+						*nvimesweeper_q*
+q			Close the game window; the last window cannot be
+			closed.
+
+			Games played in a floating window end when their
+			window is closed; games played in a tab page window
+			can be returned to with |:b|.
+
 ==============================================================================
 READING THE BOARD				*nvimesweeper-board*
 
@@ -271,6 +284,10 @@ NvimesweeperTooManyFlags	Used in the status message to indicate that
 				the number of placed flags is greater than the
 				number of mines. This means some flags must
 				have been placed incorrectly.
+
+						*hl-NvimesweeperCursor*
+NvimesweeperCursor	Drawn over the square under the cursor, on top of
+			that square's own highlight.
 
 		*hl-NvimesweeperUnrevealed* *hl-NvimesweeperUnrevealedAlt*
 NvimesweeperUnrevealed	Used for unrevealed squares without a flag or a mark.

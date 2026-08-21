@@ -22,6 +22,10 @@ function! s:DefineHighlights() abort
     highlight default link NvimesweeperLose ErrorMsg
     highlight default link NvimesweeperTooManyFlags WarningMsg
 
+    " drawn over the square under the cursor
+    highlight default NvimesweeperCursor cterm=bold,underline
+                \ gui=bold,underline guisp=#212121
+
     " unrevealed squares form a green checkerboard ("Alt" is the other colour)
     highlight default NvimesweeperUnrevealed ctermbg=Green
                 \ guibg=#aad751
