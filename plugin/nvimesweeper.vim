@@ -30,9 +30,9 @@ function! s:DefineHighlights() abort
     " de-emphasised status message text, such as the game's seed
     highlight default link NvimesweeperDim Comment
 
-    " drawn over the square under the cursor
-    highlight default NvimesweeperCursor cterm=bold,underline
-                \ gui=bold,underline guisp=#212121
+    " drawn over the square under the cursor; no underline: it would peek out
+    " from behind the terminal's block cursor on the square's padding column
+    highlight default NvimesweeperCursor cterm=bold gui=bold
 
     " unrevealed squares form a green checkerboard ("Alt" is the other colour)
     highlight default NvimesweeperUnrevealed ctermbg=Green
