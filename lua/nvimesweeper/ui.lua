@@ -596,7 +596,7 @@ function Ui:float_config()
   config.title = {
     {
       string.format(
-        " nvimesweeper %dx%d, %d mines ",
+        " Minesweeper %dx%d, %d mines ",
         board.width,
         board.height,
         board.mine_count
